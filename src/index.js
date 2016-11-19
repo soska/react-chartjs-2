@@ -1,107 +1,140 @@
 import React, {PropTypes} from 'react';
 import ReactDOM from 'react-dom';
 import Chart from 'chart.js';
-import deepEqual from './utils/deepEqual';
 
-const ChartComponent = React.createClass({
+import isEqual from 'lodash.isequal';
 
-	displayName: 'ChartComponent',
-
-	propTypes: {
-		data: PropTypes.object.isRequired,
+export default class ChartComponent extends React.Component {
+  static propTypes = {
+    data: PropTypes.object.isRequired,
     getDatasetAtEvent: PropTypes.func,
     getElementAtEvent: PropTypes.func,
     getElementsAtEvent: PropTypes.func,
-		height: PropTypes.number,
-		legend: PropTypes.object,
+    height: PropTypes.number,
+    legend: PropTypes.object,
     onElementsClick: PropTypes.func,
-		options: PropTypes.object,
-		redraw: PropTypes.bool,
-		type: PropTypes.oneOf(['doughnut', 'pie', 'line', 'bar', 'horizontalBar', 'radar', 'polarArea', 'bubble']),
-		width: PropTypes.number
-	},
+    options: PropTypes.object,
+    redraw: PropTypes.bool,
+    type: PropTypes.oneOf(['doughnut', 'pie', 'line', 'bar', 'horizontalBar', 'radar', 'polarArea', 'bubble']),
+    width: PropTypes.number
+  }
 
-	getDefaultProps() {
-		return {
-			legend: {
-				display: true,
-				position: 'bottom'
-			},
-			type: 'doughnut',
-			height: 150,
-			width: 300,
-			redraw: false
-		};
-	},
+  static defaultProps = {
+    legend: {
+      display: true,
+      position: 'bottom'
+    },
+    type: 'doughnut',
+    height: 150,
+    width: 300,
+    redraw: false
+  }
 
-	componentWillMount() {
-		this.chart_instance = undefined;
-	},
+  componentWillMount() {
+    this.chart_instance = undefined;
+  }
 
-	componentDidMount() {
-		this.renderChart();
-	},
+  componentDidMount() {
+    this.renderChart();
+  }
 
-	componentDidUpdate() {
-		if (this.props.redraw) {
-			this.chart_instance.destroy();
-			this.renderChart();
-		} else {
-			this.updateChart();
-		}
-	},
+  componentDidUpdate() {
+    if (this.props.redraw) {
+      this.chart_instance.destroy();
+      this.renderChart();
+      return;
+    }
 
-	_objectWithoutProperties (obj, keys) {
-		var target = {};
-		for (var i in obj) {
-			if (keys.indexOf(i) >= 0) continue;
-			if (!Object.prototype.hasOwnProperty.call(obj, i)) continue;
-			target[i] = obj[i];
-		}
-		return target;
-	},
+    this.updateChart();
+  }
 
-	shouldComponentUpdate(nextProps, nextState) {
-		const ignoredProperties = ['id', 'width', 'height', 'onElementsClick'];
-		const compareNext = this._objectWithoutProperties(nextProps, ignoredProperties);
-		const compareNow = this._objectWithoutProperties(this.props, ignoredProperties);
+  shouldComponentUpdate(nextProps) {
+    const {
+      redraw,
+      type,
+      options,
+      legend,
+      height,
+      width
+    } = this.props;
 
-		return !deepEqual(compareNext, compareNow, {strict: true});
-	},
+    if (nextProps.redraw === true) {
+      return true;
+    }
 
-	componentWillUnmount() {
-		this.chart_instance.destroy();
-	},
+    if (height !== nextProps.height || width !== nextProps.width) {
+      return true;
+    }
 
-	updateChart() {
-		const {data, options} = this.props;
+    if (type !== nextProps.type) {
+      return true;
+    }
 
-		if (!this.chart_instance) return;
+    if (!isEqual(legend, nextProps.legend)) {
+      return true;
+    }
 
-		if (options) {
-			this.chart_instance.options = Chart.helpers.configMerge(this.chart_instance.options, options);
-		}
+    if (!isEqual(options, nextProps.options)) {
+      return true;
+    }
 
-		this.chart_instance.config.data = {
-			...this.chart_instance.config.data,
-			...data
-		};
+    return !isEqual(this.shadowDataProp, nextProps.data);
+  }
 
-		this.chart_instance.update();
-	},
+  componentWillUnmount() {
+    this.chart_instance.destroy();
+  }
 
-	renderChart() {
-		const {data, options, legend, type} = this.props;
-		const node = ReactDOM.findDOMNode(this);
+  // Chart.js directly mutates the data.dataset objects by adding _meta proprerty
+  // this makes impossible to compare the current and next data changes
+  // therefore we memoize the data prop while sending a dake to Chart.js for mutation.
+  // see https://github.com/chartjs/Chart.js/blob/master/src/core/core.controller.js#L615-L617
+  memoizeDataProps() {
+    const { data } = this.props;
 
-		this.chart_instance = new Chart(node, {
-			type,
-			data,
-			options
-		});
-	},
+    if (!data) {
+      return;
+    }
 
-	handleOnClick(event) {
+    this.shadowDataProp = {
+      ...data,
+      datasets: data.datasets && data.datasets.map(set => Object.assign({}, set))
+    };
+  }
+
+  updateChart() {
+    const {data, options} = this.props;
+
+    this.memoizeDataProps();
+
+    if (!this.chart_instance) return;
+
+    if (options) {
+      this.chart_instance.options = Chart.helpers.configMerge(this.chart_instance.options, options);
+    }
+
+    this.chart_instance.config.data = {
+      ...this.chart_instance.config.data,
+      ...data
+    };
+
+    this.chart_instance.update();
+  }
+
+  renderChart() {
+    const {data, options, legend, type, redraw} = this.props;
+    const node = ReactDOM.findDOMNode(this);
+
+    this.memoizeDataProps();
+
+    this.chart_instance = new Chart(node, {
+      type,
+      data,
+      options
+    });
+  }
+
+  handleOnClick = (event) => {
     const instance = this.chart_instance;
 
     const {
@@ -112,120 +145,118 @@ const ChartComponent = React.createClass({
     } = this.props;
 
     getDatasetAtEvent && getDatasetAtEvent(instance.getDatasetAtEvent(event));
-		getElementAtEvent && getElementAtEvent(instance.getElementAtEvent(event));
-		getElementsAtEvent && getElementsAtEvent(instance.getElementsAtEvent(event));
+    getElementAtEvent && getElementAtEvent(instance.getElementAtEvent(event));
+    getElementsAtEvent && getElementsAtEvent(instance.getElementsAtEvent(event));
     onElementsClick && onElementsClick(instance.getElementsAtEvent(event)); // Backward compatibility
-	},
+  }
 
-	render() {
-		const {height, width, onElementsClick} = this.props;
+  render() {
+    const {height, width, onElementsClick} = this.props;
 
-		return (
-			<canvas
-				height={height}
-				width={width}
-				onClick={this.handleOnClick}
-			/>
-		);
-	}
-});
-
-export default ChartComponent;
+    return (
+      <canvas
+        height={height}
+        width={width}
+        onClick={this.handleOnClick}
+      />
+    );
+  }
+}
 
 export class Doughnut extends React.Component {
-	render() {
-		return (
-			<ChartComponent
-				{...this.props}
-				ref={ref => this.chart_instance = ref && ref.chart_instance}
-				type='doughnut'
-			/>
-		);
-	}
+  render() {
+    return (
+      <ChartComponent
+        {...this.props}
+        ref={ref => this.chart_instance = ref && ref.chart_instance}
+        type='doughnut'
+      />
+    );
+  }
 }
 
 export class Pie extends React.Component {
-	render() {
-		return (
-			<ChartComponent
-				{...this.props}
-				ref={ref => this.chart_instance = ref && ref.chart_instance}
-				type='pie'
-			/>
-		);
-	}
+  render() {
+    return (
+      <ChartComponent
+        {...this.props}
+        ref={ref => this.chart_instance = ref && ref.chart_instance}
+        type='pie'
+      />
+    );
+  }
 }
 
 export class Line extends React.Component {
-	render() {
-		return (
-			<ChartComponent
-				{...this.props}
-				ref={ref => this.chart_instance = ref && ref.chart_instance}
-				type='line'
-			/>
-		);
-	}
+  render() {
+    return (
+      <ChartComponent
+        {...this.props}
+        ref={ref => this.chart_instance = ref && ref.chart_instance}
+        type='line'
+      />
+    );
+  }
 }
 
 export class Bar extends React.Component {
-	render() {
-		return (
-			<ChartComponent
-				{...this.props}
-				ref={ref => this.chart_instance = ref && ref.chart_instance}
-				type='bar'
-			/>
-		);
-	}
+  render() {
+    return (
+      <ChartComponent
+        {...this.props}
+        ref={ref => this.chart_instance = ref && ref.chart_instance}
+        type='bar'
+      />
+    );
+  }
 }
 
 export class HorizontalBar extends React.Component {
-	render() {
-		return (
-			<ChartComponent
-				{...this.props}
-				ref={ref => this.chart_instance = ref && ref.chart_instance}
-				type='horizontalBar'
-			/>
-		);
-	}
+  render() {
+    return (
+      <ChartComponent
+        {...this.props}
+        ref={ref => this.chart_instance = ref && ref.chart_instance}
+        type='horizontalBar'
+      />
+    );
+  }
 }
 
 export class Radar extends React.Component {
-	render() {
-		return (
-			<ChartComponent
-				{...this.props}
-				ref={ref => this.chart_instance = ref && ref.chart_instance}
-				type='radar'
-			/>
-		);
-	}
+  render() {
+    return (
+      <ChartComponent
+        {...this.props}
+        ref={ref => this.chart_instance = ref && ref.chart_instance}
+        type='radar'
+      />
+    );
+  }
 }
 
 export class Polar extends React.Component {
-	render() {
-		return (
-			<ChartComponent
-				{...this.props}
-				ref={ref => this.chart_instance = ref && ref.chart_instance}
-				type='polarArea'
-			/>
-		);
-	}
+  render() {
+    return (
+      <ChartComponent
+        {...this.props}
+        ref={ref => this.chart_instance = ref && ref.chart_instance}
+        type='polarArea'
+      />
+    );
+  }
 }
 
 export class Bubble extends React.Component {
-	render() {
-		return (
-			<ChartComponent
-				{...this.props}
-				ref={ref => this.chart_instance = ref && ref.chart_instance}
-				type='bubble'
-			/>
-		);
-	}
+  render() {
+    return (
+      <ChartComponent
+        {...this.props}
+        ref={ref => this.chart_instance = ref && ref.chart_instance}
+        type='bubble'
+      />
+    );
+  }
 }
 
 export const defaults = Chart.defaults;
